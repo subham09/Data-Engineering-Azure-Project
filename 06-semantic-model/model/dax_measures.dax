@@ -1,0 +1,244 @@
+// ============================================================
+// DAX Measures — RetailSalesSemanticModel
+// Fabric Item: Semantic Model (DirectLake)
+// DP-700 Skill: Implement and Manage Analytics Solution
+// ============================================================
+// Paste each measure into the semantic model via the DAX editor
+// or use Tabular Editor for bulk import.
+// ============================================================
+
+
+// ── CORE KPIs ──────────────────────────────────────────────
+
+Total Revenue =
+    SUMX(
+        FILTER(fact_orders, fact_orders[status] = "Delivered"),
+        fact_orders[total_amount]
+    )
+
+Order Count =
+    COUNTROWS(FILTER(fact_orders, fact_orders[status] <> "Cancelled"))
+
+Avg Order Value =
+    DIVIDE([Total Revenue], [Order Count])
+
+Unique Customers =
+    DISTINCTCOUNT(fact_orders[customer_id])
+
+Units Sold =
+    SUM(fact_order_items[quantity])
+
+Total Discounts =
+    SUMX(
+        FILTER(fact_orders, fact_orders[status] = "Delivered"),
+        fact_orders[discount_amount]
+    )
+
+Discount Rate % =
+    DIVIDE(
+        [Total Discounts],
+        [Total Revenue] + [Total Discounts],
+        0
+    ) * 100
+
+Gross Revenue =
+    [Total Revenue] + [Total Discounts]
+
+Avg Days to Deliver =
+    AVERAGEX(
+        FILTER(fact_orders, NOT ISBLANK(fact_orders[days_to_deliver])),
+        fact_orders[days_to_deliver]
+    )
+
+
+// ── TIME INTELLIGENCE ──────────────────────────────────────
+// Requires dim_date[full_date] marked as a Date table in the model.
+
+Revenue MTD =
+    CALCULATE(
+        [Total Revenue],
+        DATESMTD(dim_date[full_date])
+    )
+
+Revenue QTD =
+    CALCULATE(
+        [Total Revenue],
+        DATESQTD(dim_date[full_date])
+    )
+
+Revenue YTD =
+    CALCULATE(
+        [Total Revenue],
+        DATESYTD(dim_date[full_date])
+    )
+
+Revenue LY =
+    CALCULATE(
+        [Total Revenue],
+        SAMEPERIODLASTYEAR(dim_date[full_date])
+    )
+
+Revenue YoY Change =
+    [Total Revenue] - [Revenue LY]
+
+Revenue YoY % =
+    DIVIDE(
+        [Revenue YoY Change],
+        [Revenue LY],
+        BLANK()
+    ) * 100
+
+Revenue LM =
+    CALCULATE(
+        [Total Revenue],
+        PREVIOUSMONTH(dim_date[full_date])
+    )
+
+Revenue MoM Change =
+    [Total Revenue] - [Revenue LM]
+
+Revenue MoM % =
+    DIVIDE(
+        [Revenue MoM Change],
+        [Revenue LM],
+        BLANK()
+    ) * 100
+
+Orders YTD =
+    CALCULATE(
+        [Order Count],
+        DATESYTD(dim_date[full_date])
+    )
+
+Orders LY =
+    CALCULATE(
+        [Order Count],
+        SAMEPERIODLASTYEAR(dim_date[full_date])
+    )
+
+Orders YoY % =
+    DIVIDE(
+        [Order Count] - [Orders LY],
+        [Orders LY],
+        BLANK()
+    ) * 100
+
+
+// ── CUSTOMER ANALYTICS ─────────────────────────────────────
+
+New Customers =
+VAR _min_dates =
+    CALCULATETABLE(
+        ADDCOLUMNS(
+            VALUES(fact_orders[customer_id]),
+            "FirstOrder", CALCULATE(MIN(fact_orders[order_date]))
+        ),
+        ALL(dim_date)
+    )
+VAR _current_period_start = MIN(dim_date[full_date])
+VAR _current_period_end   = MAX(dim_date[full_date])
+RETURN
+    COUNTROWS(
+        FILTER(
+            _min_dates,
+            [FirstOrder] >= _current_period_start &&
+            [FirstOrder] <= _current_period_end
+        )
+    )
+
+Returning Customers =
+    [Unique Customers] - [New Customers]
+
+Repeat Customer Rate =
+DIVIDE(
+    COUNTROWS(
+        FILTER(
+            ADDCOLUMNS(
+                VALUES(fact_orders[customer_id]),
+                "OrderCount", CALCULATE(COUNTROWS(fact_orders))
+            ),
+            [OrderCount] >= 2
+        )
+    ),
+    [Unique Customers],
+    0
+) * 100
+
+Customer LTV =
+    DIVIDE([Total Revenue], [Unique Customers])
+
+Revenue per New Customer =
+    DIVIDE([Total Revenue], [New Customers])
+
+Avg Orders per Customer =
+    DIVIDE([Order Count], [Unique Customers])
+
+
+// ── PRODUCT ANALYTICS ──────────────────────────────────────
+
+Revenue per Unit =
+    DIVIDE([Total Revenue], [Units Sold])
+
+Top Product Revenue =
+    MAXX(
+        VALUES(dim_product[product_name]),
+        CALCULATE([Total Revenue])
+    )
+
+Category Revenue % =
+    DIVIDE(
+        [Total Revenue],
+        CALCULATE([Total Revenue], ALL(dim_product[category])),
+        0
+    ) * 100
+
+
+// ── OPERATIONAL ────────────────────────────────────────────
+
+Cancelled Order Rate =
+DIVIDE(
+    COUNTROWS(FILTER(fact_orders, fact_orders[status] = "Cancelled")),
+    COUNTROWS(fact_orders),
+    0
+) * 100
+
+Avg Shipping Cost =
+    AVERAGEX(
+        FILTER(fact_orders, fact_orders[status] = "Delivered"),
+        fact_orders[shipping_cost]
+    )
+
+Express Shipping % =
+DIVIDE(
+    COUNTROWS(FILTER(fact_orders, fact_orders[shipping_method] = "Express")),
+    [Order Count],
+    0
+) * 100
+
+Orders with Coupon % =
+DIVIDE(
+    COUNTROWS(FILTER(fact_orders, NOT ISBLANK(fact_orders[coupon_code]))),
+    [Order Count],
+    0
+) * 100
+
+
+// ── RUNNING TOTALS (for waterfall / trend visuals) ─────────
+
+Revenue Running Total =
+    CALCULATE(
+        [Total Revenue],
+        FILTER(
+            ALL(dim_date[full_date]),
+            dim_date[full_date] <= MAX(dim_date[full_date])
+        )
+    )
+
+Order Count Running Total =
+    CALCULATE(
+        [Order Count],
+        FILTER(
+            ALL(dim_date[full_date]),
+            dim_date[full_date] <= MAX(dim_date[full_date])
+        )
+    )

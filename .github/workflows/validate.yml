@@ -1,0 +1,217 @@
+name: Validate Portfolio Project
+
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── 1. Validate Python (notebooks + Airflow DAG) ──────────────────────────
+  validate-python:
+    name: Python Syntax & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting tools
+        run: pip install pyflakes nbformat
+
+      - name: Check Airflow DAG syntax
+        run: python -m pyflakes 09-airflow/dags/retail_sales_dag.py
+
+      - name: Check data generator syntax
+        run: python -m pyflakes data/generate_data.py
+
+      - name: Validate notebook JSON structure
+        run: |
+          python - <<'EOF'
+          import json, os, sys
+          notebook_dir = "01-lakehouse/notebooks"
+          errors = []
+          for fname in os.listdir(notebook_dir):
+              if fname.endswith(".ipynb"):
+                  path = os.path.join(notebook_dir, fname)
+                  try:
+                      with open(path) as f:
+                          nb = json.load(f)
+                      assert nb.get("nbformat") == 4, "Expected nbformat 4"
+                      assert "cells" in nb, "Missing 'cells' key"
+                      print(f"  OK: {fname} ({len(nb['cells'])} cells)")
+                  except Exception as e:
+                      errors.append(f"FAIL: {fname} — {e}")
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          print(f"\nAll {len(os.listdir(notebook_dir))} notebooks valid.")
+          EOF
+
+  # ── 2. Validate SQL scripts ───────────────────────────────────────────────
+  validate-sql:
+    name: SQL Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff
+
+      - name: Lint SQL scripts (T-SQL dialect)
+        run: |
+          sqlfluff lint 02-data-warehouse/sql/ \
+            --dialect tsql \
+            --exclude-rules L003,L014,L016,L031 \
+            --max-line-length 120 || true
+          # `|| true` — report issues but don't fail the CI
+          # Remove `|| true` to enforce strict SQL style
+
+  # ── 3. Validate KQL scripts ───────────────────────────────────────────────
+  validate-kql:
+    name: KQL File Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check KQL files exist and are non-empty
+        run: |
+          python - <<'EOF'
+          import os, sys
+          kql_dir = "05-realtime-analytics/kql"
+          errors = []
+          for fname in os.listdir(kql_dir):
+              if fname.endswith(".kql"):
+                  path = os.path.join(kql_dir, fname)
+                  size = os.path.getsize(path)
+                  if size == 0:
+                      errors.append(f"EMPTY: {path}")
+                  else:
+                      print(f"  OK: {fname} ({size} bytes)")
+          monitoring_kql = "08-monitoring/monitoring_queries.kql"
+          if os.path.getsize(monitoring_kql) == 0:
+              errors.append(f"EMPTY: {monitoring_kql}")
+          else:
+              print(f"  OK: {monitoring_kql}")
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          EOF
+
+  # ── 4. Validate CSV sample data ───────────────────────────────────────────
+  validate-data:
+    name: Sample Data Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate CSV structure and row counts
+        run: |
+          python - <<'EOF'
+          import csv, sys, os
+
+          checks = {
+              "data/sample/customers.csv":   {"min_rows": 5,  "required_cols": ["customer_id","email","segment"]},
+              "data/sample/products.csv":    {"min_rows": 5,  "required_cols": ["product_id","unit_price","category"]},
+              "data/sample/orders.csv":      {"min_rows": 5,  "required_cols": ["order_id","customer_id","order_date","total_amount"]},
+              "data/sample/order_items.csv": {"min_rows": 5,  "required_cols": ["order_item_id","order_id","product_id","line_total"]},
+          }
+
+          errors = []
+          for path, rules in checks.items():
+              with open(path, newline="", encoding="utf-8") as f:
+                  reader = csv.DictReader(f)
+                  rows = list(reader)
+                  headers = reader.fieldnames or []
+
+              missing_cols = [c for c in rules["required_cols"] if c not in headers]
+              if missing_cols:
+                  errors.append(f"{path}: missing columns {missing_cols}")
+              if len(rows) < rules["min_rows"]:
+                  errors.append(f"{path}: only {len(rows)} rows (expected >= {rules['min_rows']})")
+              else:
+                  print(f"  OK: {path} — {len(rows)} rows, {len(headers)} columns")
+
+          if errors:
+              print("\nERRORS:")
+              print("\n".join(errors))
+              sys.exit(1)
+          print("\nAll CSV files valid.")
+          EOF
+
+  # ── 5. Validate project structure ─────────────────────────────────────────
+  validate-structure:
+    name: Required Files Exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check all required files are present
+        run: |
+          python - <<'EOF'
+          import os, sys
+
+          required = [
+              "README.md",
+              "01-lakehouse/notebooks/01_bronze_raw_ingestion.ipynb",
+              "01-lakehouse/notebooks/02_silver_transformation.ipynb",
+              "01-lakehouse/notebooks/03_gold_aggregation.ipynb",
+              "01-lakehouse/notebooks/04_delta_time_travel.ipynb",
+              "02-data-warehouse/sql/02_create_tables.sql",
+              "02-data-warehouse/sql/05_analytical_queries.sql",
+              "03-pipelines/pipeline_definitions/master_pipeline.json",
+              "05-realtime-analytics/kql/01_create_eventhouse_tables.kql",
+              "05-realtime-analytics/kql/03_windowing_analytics.kql",
+              "06-semantic-model/model/dax_measures.dax",
+              "07-security-governance/rbac_configuration.md",
+              "08-monitoring/monitoring_queries.kql",
+              "09-airflow/dags/retail_sales_dag.py",
+              "10-deployment-pipeline/deployment_config.md",
+              "docs/setup-guide.md",
+              "docs/dp700-coverage-mapping.md",
+              "data/generate_data.py",
+          ]
+
+          missing = [f for f in required if not os.path.exists(f)]
+          if missing:
+              print("MISSING FILES:")
+              for f in missing:
+                  print(f"  {f}")
+              sys.exit(1)
+          print(f"All {len(required)} required files present.")
+          EOF
+
+  # ── 6. DAX measures sanity check ──────────────────────────────────────────
+  validate-dax:
+    name: DAX Measures Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify DAX file contains key measures
+        run: |
+          python - <<'EOF'
+          import sys
+
+          with open("06-semantic-model/model/dax_measures.dax", encoding="utf-8") as f:
+              content = f.read()
+
+          required_measures = [
+              "Total Revenue",
+              "Order Count",
+              "Avg Order Value",
+              "Revenue YTD",
+              "Revenue YoY %",
+              "New Customers",
+              "Repeat Customer Rate",
+          ]
+
+          missing = [m for m in required_measures if m not in content]
+          if missing:
+              print(f"Missing DAX measures: {missing}")
+              sys.exit(1)
+          print(f"All {len(required_measures)} key DAX measures found.")
+          EOF

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Fabric / Spark
+*.log
+spark-warehouse/
+derby.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit
+*.key
+*.pem
+credentials*.json
+service_principal*.json

@@ -1,0 +1,118 @@
+// ============================================================
+// Script: 02_streaming_queries.kql
+// Purpose: KQL queries for real-time order analytics
+// Fabric Item: Eventhouse (RetailEventsDB)
+// DP-700 Skill: Ingest and Transform Data > Streaming Data Processing
+// ============================================================
+
+// ============================================================
+// 1. Real-Time Order Count (Last 15 Minutes)
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(15m)
+| where EventType == "order_placed"
+| summarize
+    OrderCount    = count(),
+    TotalRevenue  = sum(OrderAmount),
+    UniqueCustomers = dcount(CustomerId)
+| extend AvgOrderValue = TotalRevenue / OrderCount
+
+// ============================================================
+// 2. Orders Per Minute — Last Hour (for Real-Time Dashboard)
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(1h)
+| where EventType == "order_placed"
+| summarize
+    OrderCount   = count(),
+    TotalRevenue = sum(OrderAmount)
+    by bin(EventTimestamp, 1m)
+| order by EventTimestamp asc
+| render timechart
+    with (title="Orders Per Minute", ytitle="Order Count", xtitle="Time")
+
+// ============================================================
+// 3. Revenue by Channel — Last 6 Hours
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(6h)
+| where EventType == "order_placed"
+| summarize
+    OrderCount   = count(),
+    TotalRevenue = sum(OrderAmount),
+    AvgOrderVal  = avg(OrderAmount)
+    by Channel
+| order by TotalRevenue desc
+
+// ============================================================
+// 4. Funnel Analysis — Order Conversion (Last 24h)
+// ============================================================
+let pageviews = PageviewEvents
+    | where EventTimestamp > ago(24h)
+    | summarize PageviewCount = count() by CustomerId, PageType;
+
+let orders = OrderEvents
+    | where EventTimestamp > ago(24h)
+    | where EventType == "order_placed"
+    | summarize OrderCount = count() by CustomerId;
+
+pageviews
+| join kind=leftouter orders on CustomerId
+| summarize
+    TotalVisitors     = dcount(CustomerId),
+    CheckoutVisitors  = dcountif(CustomerId, PageType == "checkout"),
+    OrdersPlaced      = sum(OrderCount)
+| extend ConversionRate = round(toreal(OrdersPlaced) / TotalVisitors * 100, 2)
+
+// ============================================================
+// 5. Order Event Type Distribution — Last Hour
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(1h)
+| summarize Count = count() by EventType
+| extend Percentage = round(toreal(Count) / toscalar(
+    OrderEvents | where EventTimestamp > ago(1h) | count
+  ) * 100, 1)
+| order by Count desc
+
+// ============================================================
+// 6. Top Customers by Spend — Last 24 Hours
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(24h)
+| where EventType == "order_placed"
+| summarize
+    OrderCount   = count(),
+    TotalSpend   = sum(OrderAmount),
+    LastOrderAt  = max(EventTimestamp)
+    by CustomerId
+| top 10 by TotalSpend desc
+| project CustomerId, OrderCount, TotalSpend, LastOrderAt
+
+// ============================================================
+// 7. Anomaly Detection — Unusual Order Spike
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(7d)
+| where EventType == "order_placed"
+| summarize OrderCount = count() by bin(EventTimestamp, 1h)
+| extend
+    MovingAvg = series_moving_avg(OrderCount, 24),
+    Anomalies = series_decompose_anomalies(OrderCount, 2.0)
+| mv-expand EventTimestamp, OrderCount, MovingAvg, Anomalies
+| where Anomalies != 0
+| project EventTimestamp, OrderCount, MovingAvg, AnomalyScore = Anomalies
+
+// ============================================================
+// 8. Regional Performance Heatmap — Last 3 Days
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(3d)
+| where EventType == "order_placed"
+| summarize
+    OrderCount   = count(),
+    TotalRevenue = sum(OrderAmount)
+    by Region, bin(EventTimestamp, 1h)
+| order by Region asc, EventTimestamp asc
+| render heatmap
+    with (title="Revenue Heatmap by Region and Hour")

@@ -1,0 +1,95 @@
+// ============================================================
+// Script: 01_create_eventhouse_tables.kql
+// Purpose: Create KQL database tables for real-time order event analytics
+// Fabric Item: Eventhouse (RetailEventsDB)
+// DP-700 Skill: Ingest and Transform Data > Streaming Data Processing
+// ============================================================
+
+// ============================================================
+// 1. Raw Order Events Table
+// Receives events from Eventstream in near-real-time
+// ============================================================
+.create-merge table OrderEvents (
+    EventId:          string,
+    EventType:        string,           // order_placed, payment_confirmed, shipped, delivered, cancelled
+    OrderId:          string,
+    CustomerId:       string,
+    ProductId:        string,
+    Quantity:         int,
+    OrderAmount:      real,
+    Channel:          string,           // Web, Mobile, App
+    PaymentMethod:    string,
+    Region:           string,
+    EventTimestamp:   datetime,
+    IngestTimestamp:  datetime
+)
+
+// Set retention: keep 90 days of events
+.alter table OrderEvents policy retention softdelete = 90d recoverability = enabled
+
+// Batch ingestion policy: buffer up to 30s or 100MB before flushing
+.alter table OrderEvents policy ingestionbatching
+```
+{
+  "MaximumBatchingTimeSpan": "00:00:30",
+  "MaximumNumberOfItems": 10000,
+  "MaximumRawDataSizeMB": 100
+}
+```
+
+// ============================================================
+// 2. Clickstream / Pageview Events Table
+// ============================================================
+.create-merge table PageviewEvents (
+    SessionId:        string,
+    CustomerId:       string,
+    PageUrl:          string,
+    PageType:         string,           // home, product, cart, checkout, confirmation
+    ProductId:        string,
+    ReferralSource:   string,
+    DeviceType:       string,
+    EventTimestamp:   datetime,
+    IngestTimestamp:  datetime
+)
+
+.alter table PageviewEvents policy retention softdelete = 30d recoverability = disabled
+
+// ============================================================
+// 3. Materialized View: Real-Time Order Summary (last 24h)
+// Pre-aggregates streaming data for fast dashboard queries
+// ============================================================
+.create-or-alter materialized-view with (backfill=true) OrderSummary24h on table OrderEvents
+{
+    OrderEvents
+    | where EventTimestamp > ago(24h)
+    | where EventType == "order_placed"
+    | summarize
+        OrderCount      = count(),
+        TotalRevenue    = sum(OrderAmount),
+        UniqueCustomers = dcount(CustomerId),
+        AvgOrderValue   = avg(OrderAmount)
+        by bin(EventTimestamp, 1h), Channel, Region
+}
+
+// ============================================================
+// 4. Update Policy: Auto-calculate derived columns on ingest
+// ============================================================
+.create-or-alter function OrderEnrichmentFunction() {
+    OrderEvents
+    | extend
+        HourOfDay   = hourofday(EventTimestamp),
+        DayOfWeek   = dayofweek(EventTimestamp) / 1d,
+        IsWeekend   = dayofweek(EventTimestamp) in (0d, 6d),
+        IsPeakHour  = hourofday(EventTimestamp) between (10 .. 20)
+}
+
+.alter table OrderEvents policy update
+```
+[{
+  "IsEnabled": true,
+  "Source": "OrderEvents",
+  "Query": "OrderEnrichmentFunction()",
+  "IsTransactional": false,
+  "PropagateIngestionProperties": true
+}]
+```

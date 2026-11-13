@@ -1,0 +1,26 @@
+product_id,product_name,category,subcategory,brand,unit_price,cost_price,stock_quantity,weight_kg,is_active,created_date
+P001,Wireless Bluetooth Headphones,Electronics,Audio,SoundPro,89.99,42.00,250,0.35,true,2020-01-10
+P002,Running Shoes - Men,Footwear,Athletic,SpeedStep,129.99,58.00,180,0.72,true,2020-01-15
+P003,Yoga Mat Premium,Sports,Fitness,FlexFit,45.00,18.50,320,1.20,true,2020-02-01
+P004,Stainless Steel Water Bottle,Kitchen,Drinkware,HydroMax,24.99,9.00,500,0.45,true,2020-02-10
+P005,USB-C Laptop Charger 65W,Electronics,Accessories,PowerTech,49.99,20.00,400,0.28,true,2020-03-05
+P006,Cotton T-Shirt - Women,Apparel,Tops,StyleEase,19.99,6.50,600,0.22,true,2020-03-15
+P007,Non-Stick Frying Pan 12in,Kitchen,Cookware,ChefMaster,59.99,25.00,150,1.10,true,2020-04-01
+P008,LED Desk Lamp,Home,Lighting,BrightHome,35.00,14.00,220,0.85,true,2020-04-20
+P009,Protein Powder Chocolate 2kg,Health,Supplements,NutriPro,54.99,22.50,180,2.00,true,2020-05-10
+P010,Mechanical Keyboard,Electronics,Peripherals,TypePro,149.99,65.00,90,1.20,true,2020-05-25
+P011,Backpack 30L,Bags,Travel,PackMaster,79.99,32.00,210,0.95,true,2020-06-08
+P012,Smart Watch Fitness Tracker,Electronics,Wearables,FitTech,199.99,88.00,120,0.08,true,2020-06-20
+P013,Coffee Maker Drip 12-Cup,Kitchen,Appliances,BrewMaster,89.99,38.00,75,2.80,true,2020-07-05
+P014,Resistance Bands Set,Sports,Fitness,FlexFit,29.99,10.00,450,0.60,true,2020-07-18
+P015,Sunglasses Polarized,Accessories,Eyewear,ClearView,64.99,24.00,300,0.08,true,2020-08-01
+P016,Plant-Based Protein Bar (Box of 12),Health,Snacks,NutriPro,24.99,10.50,280,0.72,true,2020-08-15
+P017,Portable Bluetooth Speaker,Electronics,Audio,SoundPro,69.99,28.00,160,0.55,true,2020-09-01
+P018,Ceramic Coffee Mug Set (4-pack),Kitchen,Drinkware,ChefMaster,34.99,13.00,200,1.60,true,2020-09-20
+P019,Wireless Mouse,Electronics,Peripherals,TypePro,29.99,11.00,350,0.12,true,2020-10-05
+P020,Foam Roller,Sports,Recovery,FlexFit,24.99,9.50,380,0.90,true,2020-10-18
+P021,Denim Jeans - Men,Apparel,Bottoms,StyleEase,59.99,24.00,240,0.68,true,2020-11-01
+P022,Air Fryer 5.5L,Kitchen,Appliances,ChefMaster,119.99,52.00,95,4.50,true,2020-11-15
+P023,Vitamin D3 Supplements,Health,Vitamins,NutriPro,18.99,6.50,500,0.15,true,2020-12-01
+P024,Noise Cancelling Earbuds,Electronics,Audio,SoundPro,129.99,55.00,140,0.06,true,2020-12-15
+P025,Hiking Boots - Women,Footwear,Outdoor,SpeedStep,159.99,72.00,110,0.98,true,2021-01-05

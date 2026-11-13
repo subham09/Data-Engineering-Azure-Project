@@ -1,0 +1,140 @@
+// ============================================================
+// Script: monitoring_queries.kql
+// Purpose: Monitor Fabric pipeline runs, notebook executions,
+//          and data quality metrics in the Eventhouse
+// Fabric Item: Eventhouse (RetailEventsDB)
+// DP-700 Skill: Monitor and Optimize Analytics Solution
+// ============================================================
+
+// ============================================================
+// 1. Pipeline Run History — Last 7 Days
+// NOTE: In Fabric, pipeline run history is available via the
+// Fabric REST API or Monitor Hub. This query assumes events
+// are forwarded to Eventhouse via a custom logging pattern.
+// ============================================================
+PipelineRunEvents                       // Custom table — populated via Eventstream
+| where StartTime > ago(7d)
+| summarize
+    TotalRuns     = count(),
+    SuccessRuns   = countif(Status == "Succeeded"),
+    FailedRuns    = countif(Status == "Failed"),
+    CancelledRuns = countif(Status == "Cancelled"),
+    AvgDurationMin = avg(DurationMinutes)
+    by PipelineName, bin(StartTime, 1d)
+| extend SuccessRate = round(toreal(SuccessRuns) / TotalRuns * 100, 1)
+| order by StartTime desc
+
+// ============================================================
+// 2. Data Freshness Check — Last Ingestion Time per Table
+// ============================================================
+// In Fabric Lakehouse, query Delta table metadata via Spark or T-SQL:
+// SELECT table_name, MAX(_ingestion_timestamp) AS last_ingest
+// FROM (
+//   SELECT 'customers' AS table_name, _ingestion_timestamp FROM bronze.customers
+//   UNION ALL
+//   SELECT 'orders', _ingestion_timestamp FROM bronze.orders
+//   UNION ALL
+//   SELECT 'order_items', _ingestion_timestamp FROM bronze.order_items
+// ) t
+// GROUP BY table_name
+
+// ============================================================
+// 3. Detect Stalled Eventstream — No Events in Last 5 Minutes
+// ============================================================
+let last_event_time = toscalar(
+    OrderEvents
+    | summarize max(IngestTimestamp)
+);
+print
+    LastEventTime   = last_event_time,
+    MinutesSinceLastEvent = datetime_diff('minute', now(), last_event_time),
+    IsStalled       = datetime_diff('minute', now(), last_event_time) > 5
+
+// ============================================================
+// 4. Ingestion Lag Monitoring — P95 Lag by Hour
+// ============================================================
+OrderEvents
+| where IngestTimestamp > ago(24h)
+| extend IngestionLagSeconds = datetime_diff('second', IngestTimestamp, EventTimestamp)
+| summarize
+    P50LagSec = percentile(IngestionLagSeconds, 50),
+    P95LagSec = percentile(IngestionLagSeconds, 95),
+    P99LagSec = percentile(IngestionLagSeconds, 99),
+    MaxLagSec = max(IngestionLagSeconds)
+    by bin(IngestTimestamp, 1h)
+| order by IngestTimestamp desc
+
+// ============================================================
+// 5. Data Volume Monitoring — Alert if < Expected Daily Volume
+// ============================================================
+let expected_daily_orders = 1000;       // SLA threshold
+let today_orders = toscalar(
+    OrderEvents
+    | where EventTimestamp > startofday(now())
+    | where EventType == "order_placed"
+    | count
+);
+print
+    TodayOrders     = today_orders,
+    ExpectedOrders  = expected_daily_orders,
+    VolumeShortfall = expected_daily_orders - today_orders,
+    AlertRequired   = today_orders < expected_daily_orders * 0.8
+
+// ============================================================
+// 6. Error Rate Monitoring — Failed Events
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(1h)
+| summarize
+    TotalEvents  = count(),
+    ErrorEvents  = countif(EventType == "error"),
+    ErrorRate    = round(toreal(countif(EventType == "error")) / count() * 100, 2)
+| extend AlertLevel = case(
+    ErrorRate > 10, "CRITICAL",
+    ErrorRate > 5,  "WARNING",
+    "OK"
+)
+
+// ============================================================
+// 7. Duplicate Event Detection
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(24h)
+| summarize EventCount = count() by EventId
+| where EventCount > 1
+| summarize
+    DuplicateEventIds   = count(),
+    TotalDuplicateRows  = sum(EventCount) - count()
+| extend HasDuplicates = DuplicateEventIds > 0
+
+// ============================================================
+// 8. Query Performance — Identify Slow Queries (Fabric DW)
+// ============================================================
+// NOTE: In Fabric Data Warehouse, use DMVs to find slow queries:
+// SELECT TOP 20
+//     r.request_id,
+//     r.status,
+//     r.submit_time,
+//     r.start_time,
+//     DATEDIFF(second, r.start_time, GETDATE()) AS duration_secs,
+//     LEFT(r.command, 200) AS query_text
+// FROM sys.dm_pdw_exec_requests r
+// WHERE r.status NOT IN ('Completed', 'Cancelled', 'Failed')
+//    OR r.submit_time > DATEADD(hour, -1, GETDATE())
+// ORDER BY duration_secs DESC;
+
+// ============================================================
+// 9. Capacity Utilization Summary
+// ============================================================
+// Monitor Fabric CU consumption via the Fabric REST API:
+// GET /v1/capacities/{capacityId}/workloads
+// Or use the built-in Fabric Monitor Hub for visual dashboards
+// This KQL captures custom metrics if forwarded to Eventhouse:
+FabricCapacityMetrics               // Custom table
+| where Timestamp > ago(1h)
+| summarize
+    AvgCUUtilization    = avg(CUUsagePct),
+    MaxCUUtilization    = max(CUUsagePct),
+    TimeAbove80Pct      = countif(CUUsagePct > 80)
+    by WorkspaceName, bin(Timestamp, 5m)
+| order by Timestamp desc

@@ -1,0 +1,21 @@
+customer_id,first_name,last_name,email,phone,date_of_birth,gender,city,state,country,postal_code,segment,registration_date,is_active
+C0001,Alice,Johnson,alice.johnson@email.com,+1-555-0101,1985-03-14,F,New York,NY,USA,10001,Premium,2021-01-15,true
+C0002,Bob,Smith,bob.smith@email.com,+1-555-0102,1990-07-22,M,Los Angeles,CA,USA,90001,Standard,2021-02-10,true
+C0003,Carol,Williams,carol.w@email.com,+1-555-0103,1978-11-05,F,Chicago,IL,USA,60601,Premium,2021-01-20,true
+C0004,David,Brown,david.brown@email.com,+1-555-0104,1995-04-18,M,Houston,TX,USA,77001,Standard,2021-03-05,true
+C0005,Eve,Davis,eve.davis@email.com,+1-555-0105,1982-09-30,F,Phoenix,AZ,USA,85001,Basic,2021-02-28,true
+C0006,Frank,Miller,frank.miller@email.com,+1-555-0106,1988-06-12,M,Philadelphia,PA,USA,19101,Standard,2021-04-15,true
+C0007,Grace,Wilson,grace.wilson@email.com,+1-555-0107,1993-01-25,F,San Antonio,TX,USA,78201,Premium,2021-05-01,true
+C0008,Henry,Moore,henry.moore@email.com,+1-555-0108,1975-12-08,M,San Diego,CA,USA,92101,Basic,2021-03-20,false
+C0009,Iris,Taylor,iris.taylor@email.com,+1-555-0109,1987-08-17,F,Dallas,TX,USA,75201,Standard,2021-06-10,true
+C0010,Jack,Anderson,jack.a@email.com,+1-555-0110,1991-05-03,M,San Jose,CA,USA,95101,Premium,2021-07-05,true
+C0011,Karen,Thomas,karen.t@email.com,+1-555-0111,1983-02-20,F,Austin,TX,USA,73301,Standard,2021-08-12,true
+C0012,Leo,Jackson,leo.j@email.com,+1-555-0112,1996-10-14,M,Jacksonville,FL,USA,32201,Basic,2021-09-01,true
+C0013,Mia,White,mia.white@email.com,+1-555-0113,1980-07-09,F,Fort Worth,TX,USA,76101,Premium,2021-10-15,true
+C0014,Noah,Harris,noah.harris@email.com,+1-555-0114,1992-03-27,M,Columbus,OH,USA,43201,Standard,2021-11-20,true
+C0015,Olivia,Martin,olivia.m@email.com,+1-555-0115,1986-11-11,F,Charlotte,NC,USA,28201,Standard,2021-12-05,true
+C0016,Paul,Garcia,paul.garcia@email.com,+1-555-0116,1979-04-06,M,Indianapolis,IN,USA,46201,Basic,2022-01-10,true
+C0017,Quinn,Martinez,quinn.m@email.com,+1-555-0117,1994-08-23,F,San Francisco,CA,USA,94101,Premium,2022-02-14,true
+C0018,Ryan,Robinson,ryan.r@email.com,+1-555-0118,1989-01-16,M,Seattle,WA,USA,98101,Standard,2022-03-25,true
+C0019,Sara,Clark,sara.clark@email.com,+1-555-0119,1984-06-28,F,Denver,CO,USA,80201,Standard,2022-04-08,true
+C0020,Tom,Rodriguez,tom.r@email.com,+1-555-0120,1997-09-04,M,Nashville,TN,USA,37201,Basic,2022-05-18,true

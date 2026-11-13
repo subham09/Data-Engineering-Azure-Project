@@ -1,0 +1,187 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json",
+  "description": "Master Pipeline — Retail Sales Analytics Platform",
+  "comment": "DP-700 Skill: Implement and Manage Analytics Solution > Orchestrate processes",
+  "pipeline": {
+    "name": "PL_Master_RetailSalesLoad",
+    "description": "Master orchestration pipeline. Executes Bronze→Silver→Gold Lakehouse notebooks, then loads the Data Warehouse. Supports full and incremental load modes.",
+    "parameters": {
+      "LoadMode": {
+        "type": "string",
+        "defaultValue": "incremental",
+        "allowedValues": ["full", "incremental"]
+      },
+      "TriggerType": {
+        "type": "string",
+        "defaultValue": "scheduled",
+        "allowedValues": ["scheduled", "manual", "event"]
+      }
+    },
+    "variables": {
+      "WatermarkDate": {
+        "type": "string",
+        "defaultValue": "1900-01-01"
+      },
+      "PipelineRunId": {
+        "type": "string"
+      }
+    },
+    "activities": [
+      {
+        "name": "Get Watermark",
+        "type": "Lookup",
+        "description": "Fetch last successful load watermark from DW staging.watermark table",
+        "dependsOn": [],
+        "policy": { "timeout": "00:02:00", "retry": 1 },
+        "typeProperties": {
+          "source": {
+            "type": "WarehouseSource",
+            "sqlReaderQuery": "SELECT CAST(last_load_date AS VARCHAR) AS watermark FROM staging.watermark WHERE table_name = 'fact.orders'"
+          },
+          "dataset": { "referenceName": "DS_RetailSalesDW", "type": "DatasetReference" },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "Set Watermark Variable",
+        "type": "SetVariable",
+        "dependsOn": [{ "activity": "Get Watermark", "dependencyConditions": ["Succeeded"] }],
+        "typeProperties": {
+          "variableName": "WatermarkDate",
+          "value": {
+            "value": "@if(equals(pipeline().parameters.LoadMode, 'full'), '1900-01-01', activity('Get Watermark').output.firstRow.watermark)",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "01 Bronze Ingestion",
+        "type": "TridentNotebook",
+        "description": "Run Bronze raw ingestion notebook",
+        "dependsOn": [{ "activity": "Set Watermark Variable", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:30:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "notebookId": "01_bronze_raw_ingestion",
+          "workspaceId": "@pipeline().DataFactory",
+          "parameters": {
+            "load_mode": { "value": "@pipeline().parameters.LoadMode", "type": "string" },
+            "watermark_date": { "value": "@variables('WatermarkDate')", "type": "string" },
+            "run_id": { "value": "@pipeline().RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "02 Silver Transformation",
+        "type": "TridentNotebook",
+        "description": "Run Silver cleansing and transformation notebook",
+        "dependsOn": [{ "activity": "01 Bronze Ingestion", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:45:00", "retry": 1 },
+        "typeProperties": {
+          "notebookId": "02_silver_transformation",
+          "parameters": {
+            "load_mode": { "value": "@pipeline().parameters.LoadMode", "type": "string" },
+            "watermark_date": { "value": "@variables('WatermarkDate')", "type": "string" },
+            "run_id": { "value": "@pipeline().RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "03 Gold Aggregation",
+        "type": "TridentNotebook",
+        "description": "Run Gold aggregation notebook",
+        "dependsOn": [{ "activity": "02 Silver Transformation", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:30:00", "retry": 1 },
+        "typeProperties": {
+          "notebookId": "03_gold_aggregation",
+          "parameters": {
+            "load_mode": { "value": "@pipeline().parameters.LoadMode", "type": "string" },
+            "run_id": { "value": "@pipeline().RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "Load DW Dimensions",
+        "type": "Script",
+        "description": "Execute T-SQL to load dimension tables in Fabric DW",
+        "dependsOn": [{ "activity": "03 Gold Aggregation", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:20:00", "retry": 1 },
+        "typeProperties": {
+          "scripts": [
+            { "type": "Query", "text": { "value": "@concat('EXEC sp_load_dimensions @load_mode = ''', pipeline().parameters.LoadMode, '''')", "type": "Expression" } }
+          ],
+          "linkedService": { "referenceName": "LS_RetailSalesDW", "type": "LinkedServiceReference" }
+        }
+      },
+      {
+        "name": "Load DW Facts",
+        "type": "Script",
+        "description": "Execute T-SQL to load fact tables in Fabric DW",
+        "dependsOn": [{ "activity": "Load DW Dimensions", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:30:00", "retry": 1 },
+        "typeProperties": {
+          "scripts": [
+            { "type": "Query", "text": { "value": "@concat('DECLARE @LoadMode VARCHAR(20) = ''', pipeline().parameters.LoadMode, '''; DECLARE @WatermarkDate DATE = ''', variables('WatermarkDate'), '''; EXEC sp_load_facts @load_mode = @LoadMode, @watermark_date = @WatermarkDate')", "type": "Expression" } }
+          ],
+          "linkedService": { "referenceName": "LS_RetailSalesDW", "type": "LinkedServiceReference" }
+        }
+      },
+      {
+        "name": "On Failure - Send Alert",
+        "type": "WebActivity",
+        "description": "Send Teams notification on pipeline failure",
+        "dependsOn": [
+          { "activity": "01 Bronze Ingestion",   "dependencyConditions": ["Failed"] },
+          { "activity": "02 Silver Transformation", "dependencyConditions": ["Failed"] },
+          { "activity": "03 Gold Aggregation",   "dependencyConditions": ["Failed"] },
+          { "activity": "Load DW Facts",          "dependencyConditions": ["Failed"] }
+        ],
+        "typeProperties": {
+          "url": "@pipeline().parameters.AlertWebhookUrl",
+          "method": "POST",
+          "body": {
+            "value": "@concat('{\"text\":\"Pipeline FAILED: ', pipeline().Pipeline, ' | RunId: ', pipeline().RunId, ' | Time: ', utcnow(), '\"}')",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "triggers": [
+      {
+        "name": "TR_Daily_6AM_UTC",
+        "type": "ScheduleTrigger",
+        "description": "Run incremental load daily at 6:00 AM UTC",
+        "properties": {
+          "recurrence": {
+            "frequency": "Day",
+            "interval": 1,
+            "startTime": "2024-01-01T06:00:00Z",
+            "timeZone": "UTC",
+            "schedule": { "hours": [6], "minutes": [0] }
+          },
+          "pipelines": [{
+            "pipelineReference": { "referenceName": "PL_Master_RetailSalesLoad" },
+            "parameters": { "LoadMode": "incremental", "TriggerType": "scheduled" }
+          }]
+        }
+      },
+      {
+        "name": "TR_Weekly_Full_Load_Sunday",
+        "type": "ScheduleTrigger",
+        "description": "Run full reload every Sunday at 2:00 AM UTC",
+        "properties": {
+          "recurrence": {
+            "frequency": "Week",
+            "interval": 1,
+            "startTime": "2024-01-07T02:00:00Z",
+            "timeZone": "UTC",
+            "schedule": { "weekDays": ["Sunday"], "hours": [2], "minutes": [0] }
+          },
+          "pipelines": [{
+            "pipelineReference": { "referenceName": "PL_Master_RetailSalesLoad" },
+            "parameters": { "LoadMode": "full", "TriggerType": "scheduled" }
+          }]
+        }
+      }
+    ]
+  }
+}

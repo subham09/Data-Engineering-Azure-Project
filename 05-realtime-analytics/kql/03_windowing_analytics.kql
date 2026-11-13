@@ -1,0 +1,150 @@
+// ============================================================
+// Script: 03_windowing_analytics.kql
+// Purpose: KQL windowing functions for streaming analytics
+// Fabric Item: Eventhouse (RetailEventsDB)
+// DP-700 Skill: Ingest and Transform Data > Streaming Data Processing
+//              > KQL windowing functions
+// ============================================================
+
+// ============================================================
+// 1. TUMBLING WINDOW — Fixed, non-overlapping 5-minute buckets
+// Use case: Aggregate orders in strict 5-minute time slots
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(2h)
+| where EventType == "order_placed"
+| summarize
+    WindowStart  = min(EventTimestamp),
+    WindowEnd    = max(EventTimestamp),
+    OrderCount   = count(),
+    TotalRevenue = sum(OrderAmount)
+    by bin(EventTimestamp, 5m)    // Tumbling window = bin()
+| extend WindowType = "Tumbling-5min"
+| order by WindowStart asc
+
+// ============================================================
+// 2. SLIDING WINDOW — Overlapping window for moving averages
+// Use case: 30-minute moving average of order values
+// ============================================================
+let window_size = 30m;
+let step_size   = 5m;
+
+OrderEvents
+| where EventTimestamp > ago(6h)
+| where EventType == "order_placed"
+| summarize EventCount = count(), TotalRevenue = sum(OrderAmount)
+    by bin(EventTimestamp, step_size)
+| as T
+| extend
+    WindowRevenue = series_stats_dynamic(
+        toscalar(T | summarize make_list(TotalRevenue))
+    )
+| project EventTimestamp,
+    OrderCount   = EventCount,
+    TotalRevenue,
+    WindowType   = "Sliding-30min"
+
+// Alternative sliding window using range join pattern:
+let events = OrderEvents
+    | where EventTimestamp > ago(6h)
+    | where EventType == "order_placed"
+    | project EventTimestamp, OrderAmount;
+
+range t from ago(6h) to now() step 5m
+| extend WindowEnd = t + 30m
+| join kind=inner (events) on $left.t <= $right.EventTimestamp
+    and $right.EventTimestamp < $left.WindowEnd
+| summarize
+    OrderCount   = count(),
+    TotalRevenue = round(sum(OrderAmount), 2),
+    AvgOrderVal  = round(avg(OrderAmount), 2)
+    by bin(t, 5m)
+| project
+    WindowStart  = t,
+    WindowEnd    = t + 30m,
+    OrderCount,
+    TotalRevenue,
+    AvgOrderVal
+
+// ============================================================
+// 3. SESSION WINDOW — Group events by user session
+// Use case: Track customer journey from browse to purchase
+// A session ends after 30 minutes of inactivity
+// ============================================================
+PageviewEvents
+| where EventTimestamp > ago(24h)
+| sort by CustomerId asc, EventTimestamp asc
+| extend
+    PrevEventTime  = prev(EventTimestamp, 1),
+    PrevCustomerId = prev(CustomerId, 1)
+| extend
+    IsNewSession = iff(
+        CustomerId != PrevCustomerId
+        or datetime_diff('minute', EventTimestamp, PrevEventTime) > 30,
+        1, 0
+    )
+| extend SessionId = row_cumsum(IsNewSession)
+| summarize
+    SessionStart    = min(EventTimestamp),
+    SessionEnd      = max(EventTimestamp),
+    PageviewCount   = count(),
+    PagesVisited    = make_set(PageType),
+    ReachedCheckout = countif(PageType == "checkout") > 0,
+    CompletedOrder  = countif(PageType == "confirmation") > 0
+    by CustomerId, SessionId
+| extend SessionDurationMin = datetime_diff('minute', SessionEnd, SessionStart)
+| order by SessionStart desc
+
+// ============================================================
+// 4. LATE-ARRIVING DATA — Handle out-of-order events
+// Use case: Accept events up to 10 minutes late
+// ============================================================
+let late_arrival_tolerance = 10m;
+let current_window_start = ago(1h);
+
+OrderEvents
+| where EventTimestamp between (
+    (current_window_start - late_arrival_tolerance) ..
+    now()
+  )
+| where EventType == "order_placed"
+| extend
+    IsLateArrival = EventTimestamp < current_window_start,
+    ProcessingLag = datetime_diff('second', IngestTimestamp, EventTimestamp)
+| summarize
+    OnTimeOrders = countif(not IsLateArrival),
+    LateOrders   = countif(IsLateArrival),
+    AvgLagSec    = avg(ProcessingLag)
+
+// ============================================================
+// 5. PERCENTILE ANALYSIS — Order value distribution
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(7d)
+| where EventType == "order_placed"
+| summarize
+    P25  = percentile(OrderAmount, 25),
+    P50  = percentile(OrderAmount, 50),    // Median
+    P75  = percentile(OrderAmount, 75),
+    P90  = percentile(OrderAmount, 90),
+    P99  = percentile(OrderAmount, 99),
+    Mean = avg(OrderAmount),
+    StdDev = stdev(OrderAmount)
+    by Channel
+| extend IQR = P75 - P25
+
+// ============================================================
+// 6. FORECAST — Predict next hour's orders using time series
+// ============================================================
+OrderEvents
+| where EventTimestamp > ago(7d)
+| where EventType == "order_placed"
+| summarize OrderCount = count() by bin(EventTimestamp, 1h)
+| make-series OrderSeries = sum(OrderCount)
+    on EventTimestamp from ago(7d) to now() step 1h
+| extend (Forecast, Lower, Upper) = series_decompose_forecast(OrderSeries, 1)
+| mv-expand EventTimestamp, OrderSeries, Forecast, Lower, Upper
+| where EventTimestamp >= ago(6h)
+| project EventTimestamp, OrderSeries, Forecast, Lower, Upper
+| render timechart
+    with (title="Order Count Forecast — Next Hour")

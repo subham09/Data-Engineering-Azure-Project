@@ -1,0 +1,98 @@
+{
+  "description": "Incremental Load Pipeline — Retail Sales Analytics Platform",
+  "comment": "Lightweight pipeline for incremental-only loads. Called from master_pipeline or independently via event trigger.",
+  "pipeline": {
+    "name": "PL_Incremental_RetailSalesLoad",
+    "description": "Runs incremental Bronze→Silver→Gold→DW load. Designed for mid-day refresh or event-triggered top-ups.",
+    "parameters": {
+      "WatermarkDate": {
+        "type": "string",
+        "defaultValue": "1900-01-01",
+        "description": "Load records with dates after this value. Passed by caller or resolved from watermark table."
+      },
+      "RunId": {
+        "type": "string",
+        "defaultValue": "manual"
+      }
+    },
+    "activities": [
+      {
+        "name": "Bronze Incremental Ingest",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": { "timeout": "00:20:00", "retry": 1, "retryIntervalInSeconds": 30 },
+        "typeProperties": {
+          "notebookId": "01_bronze_raw_ingestion",
+          "parameters": {
+            "load_mode":       { "value": "incremental", "type": "string" },
+            "watermark_date":  { "value": "@pipeline().parameters.WatermarkDate", "type": "string" },
+            "run_id":          { "value": "@pipeline().parameters.RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "Silver Incremental Transform",
+        "type": "TridentNotebook",
+        "dependsOn": [{ "activity": "Bronze Incremental Ingest", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:25:00", "retry": 1 },
+        "typeProperties": {
+          "notebookId": "02_silver_transformation",
+          "parameters": {
+            "load_mode":      { "value": "incremental", "type": "string" },
+            "watermark_date": { "value": "@pipeline().parameters.WatermarkDate", "type": "string" },
+            "run_id":         { "value": "@pipeline().parameters.RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "Gold Incremental Aggregate",
+        "type": "TridentNotebook",
+        "dependsOn": [{ "activity": "Silver Incremental Transform", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:20:00", "retry": 1 },
+        "typeProperties": {
+          "notebookId": "03_gold_aggregation",
+          "parameters": {
+            "load_mode": { "value": "incremental", "type": "string" },
+            "run_id":    { "value": "@pipeline().parameters.RunId", "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "DW Incremental Load",
+        "type": "Script",
+        "dependsOn": [{ "activity": "Gold Incremental Aggregate", "dependencyConditions": ["Succeeded"] }],
+        "policy": { "timeout": "00:15:00", "retry": 1 },
+        "typeProperties": {
+          "scripts": [{
+            "type": "Query",
+            "text": {
+              "value": "@concat('DECLARE @LoadMode VARCHAR(20) = ''incremental''; DECLARE @WatermarkDate DATE = ''', pipeline().parameters.WatermarkDate, '''; EXEC sp_load_facts @load_mode = @LoadMode, @watermark_date = @WatermarkDate')",
+              "type": "Expression"
+            }
+          }]
+        }
+      }
+    ],
+    "triggers": [
+      {
+        "name": "TR_Event_NewFileArrived",
+        "type": "StorageEventTrigger",
+        "description": "Trigger incremental load when new CSV files land in OneLake Files/raw/",
+        "properties": {
+          "events": ["Microsoft.Storage.BlobCreated"],
+          "scope": "@{concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Storage/storageAccounts/onelake')}",
+          "blobPathBeginsWith": "/RetailSalesLakehouse/Files/raw/",
+          "blobPathEndsWith": ".csv",
+          "ignoreEmptyBlobs": true,
+          "pipelines": [{
+            "pipelineReference": { "referenceName": "PL_Incremental_RetailSalesLoad" },
+            "parameters": {
+              "WatermarkDate": "@trigger().outputs.body.eventTime",
+              "RunId": "@trigger().outputs.body.requestId"
+            }
+          }]
+        }
+      }
+    ]
+  }
+}
